@@ -1,0 +1,44 @@
+[package]
+name = "git-ai-commit"
+version = "0.1.0"
+edition = "2021"
+description = "AI-powered commit message generator using embedded Ollama"
+license = "MIT"
+repository = "https://github.com/username/git-ai-commit"
+
+[[bin]]
+name = "git-ai-commit"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.4", features = ["derive"] }
+tokio = { version = "1.35", features = ["full"] }
+async-trait = "0.1"
+anyhow = "1.0"
+thiserror = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+atty = "0.2"
+reqwest = { version = "0.11", features = ["json", "rustls-tls"], default-features = false }
+include_dir = "0.7"
+tempfile = "3.8"
+which = "4.4"
+regex = "1.10"
+walkdir = "2.4"
+uuid = { version = "1.6", features = ["v4"] }
+dialoguer = "0.11"
+colored = "2.1"
+toml = "0.8"
+dirs = "5.0"
+
+[dev-dependencies]
+mockito = "1.1"
+mockall = "0.13"
+tokio-test = "0.4"
+serial_test = "2.0"
+
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3", features = ["processthreadsapi", "handleapi", "synchapi"] }
+
+[build-dependencies]
+include_dir = "0.7"
