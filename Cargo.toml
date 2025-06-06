@@ -1,5 +1,5 @@
 [package]
-name = "git-ai-commit"
+name = "git-ai-commit-cli"
 version = "0.1.2"
 edition = "2021"
 description = "AI-powered commit message generator using embedded Ollama"
