@@ -1,6 +1,6 @@
 [package]
 name = "git-ai-commit"
-version = "0.1.0"
+version = "0.1.2"
 edition = "2021"
 description = "AI-powered commit message generator using embedded Ollama"
 license = "MIT"
