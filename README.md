@@ -31,12 +31,9 @@ Writing meaningful commit messages is tedious, but crucial for maintaining a hea
 ### Installation
 
 ```bash
-# Install from crates.io (recommended)
-cargo install git-ai-commit
-
-# Or install from source
-git clone https://github.com/yourusername/git-ai-commit.git
-cd git-ai-commit
+# Ynstall from source
+git clone https://github.com/yourusername/gitAICommit.git
+cd gitAICommit
 cargo install --path .
 ```
 
