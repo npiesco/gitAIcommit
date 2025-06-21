@@ -31,7 +31,7 @@ Writing meaningful commit messages is tedious, but crucial for maintaining a hea
 ### Installation
 
 ```bash
-# Ynstall from source
+# Install from source
 git clone https://github.com/yourusername/gitAICommit.git
 cd gitAICommit
 cargo install --path .
