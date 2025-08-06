@@ -7,7 +7,7 @@ fn test_default_args() {
     // Test with no arguments (all defaults)
     let args = Args::try_parse_from(["git-ai-commit"]).expect("Failed to parse args");
     
-    assert_eq!(args.model, "gemma3:4b");
+    assert_eq!(args.model, "gemma3:latest");
     assert_eq!(args.max_files, 10);
     assert_eq!(args.max_diff_lines, 50);
     assert!(args.no_confirm, "no_confirm should be true by default (no confirmation needed)");
