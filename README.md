@@ -32,7 +32,7 @@ Writing meaningful commit messages is tedious, but crucial for maintaining a hea
 
 ```bash
 # Install from source
-git clone https://github.com/yourusername/gitAICommit.git
+git clone https://github.com/npiesco/gitAICommit.git
 cd gitAICommit
 cargo install --path .
 ```
