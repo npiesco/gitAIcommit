@@ -11,6 +11,12 @@ pub struct ModelInfo {
 
 pub struct ModelManager;
 
+impl Default for ModelManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ModelManager {
     pub fn new() -> Self {
         ModelManager
@@ -24,11 +30,14 @@ impl ModelManager {
             .context("Failed to execute ollama list command")?;
 
         if !output.status.success() {
-            anyhow::bail!("Failed to list models: {}", String::from_utf8_lossy(&output.stderr));
+            anyhow::bail!(
+                "Failed to list models: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
 
         let stdout = String::from_utf8(output.stdout).context("Invalid UTF-8 in command output")?;
-        
+
         // Parse the output line by line, skipping the header
         let mut models = Vec::new();
         for line in stdout.lines().skip(1) {
@@ -113,10 +122,10 @@ mod tests {
     fn test_has_model() {
         let manager = ModelManager::new();
         let _ = manager.ensure_model_available("tinyllama:latest");
-        
+
         let result = manager.has_model("tinyllama:latest");
         assert!(result.is_ok(), "Failed to check model existence");
-        
+
         // Clean up
         let _ = manager.delete_model("tinyllama:latest");
     }

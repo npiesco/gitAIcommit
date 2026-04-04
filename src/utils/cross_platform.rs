@@ -1,6 +1,6 @@
 //! Cross-platform utilities for file system operations
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Get the appropriate Ollama binary name for the current platform
 pub fn get_ollama_binary_name() -> &'static str {
@@ -33,7 +33,7 @@ pub fn get_temp_dir() -> PathBuf {
 }
 
 /// Check if a path is executable
-pub fn is_executable(path: &PathBuf) -> bool {
+pub fn is_executable(path: &Path) -> bool {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -44,7 +44,7 @@ pub fn is_executable(path: &PathBuf) -> bool {
             false
         }
     }
-    
+
     #[cfg(windows)]
     {
         path.extension()
@@ -55,7 +55,7 @@ pub fn is_executable(path: &PathBuf) -> bool {
 }
 
 /// Create directory if it doesn't exist
-pub fn ensure_dir_exists(path: &PathBuf) -> std::io::Result<()> {
+pub fn ensure_dir_exists(path: &Path) -> std::io::Result<()> {
     if !path.exists() {
         std::fs::create_dir_all(path)?;
     }
@@ -72,13 +72,13 @@ pub fn get_shell_command() -> (&'static str, &'static str) {
 }
 
 /// Convert path to string safely
-pub fn path_to_string(path: &PathBuf) -> String {
+pub fn path_to_string(path: &Path) -> String {
     path.to_string_lossy().to_string()
 }
 
 /// Join paths in a cross-platform way
-pub fn join_paths(base: &PathBuf, relative: &str) -> PathBuf {
-    let mut result = base.clone();
+pub fn join_paths(base: &Path, relative: &str) -> PathBuf {
+    let mut result = base.to_path_buf();
     result.push(relative);
     result
 }

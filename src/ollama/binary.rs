@@ -20,7 +20,7 @@ impl OllamaBinary {
             binary_path: None,
         })
     }
-    
+
     /// Extract the appropriate Ollama binary for the current platform
     pub async fn ensure_extracted(&mut self) -> Result<PathBuf> {
         if let Some(ref path) = self.binary_path {
@@ -28,30 +28,33 @@ impl OllamaBinary {
                 return Ok(path.clone());
             }
         }
-        
+
         // Try to find system Ollama first
         if let Ok(system_path) = which::which("ollama") {
             self.binary_path = Some(system_path.clone());
             return Ok(system_path);
         }
-        
+
         // Extract embedded binary
         let binary_name = cross_platform::get_ollama_binary_name();
-        let binary_file = ASSETS_DIR
-            .get_file(binary_name)
-            .ok_or_else(|| GitAiError::Ollama(format!("Ollama binary not found for platform: {}", binary_name)))?;
-        
+        let binary_file = ASSETS_DIR.get_file(binary_name).ok_or_else(|| {
+            GitAiError::Ollama(format!(
+                "Ollama binary not found for platform: {}",
+                binary_name
+            ))
+        })?;
+
         // Create temporary directory
         let temp_dir = tempdir()
             .map_err(|e| GitAiError::Ollama(format!("Failed to create temp directory: {}", e)))?;
-        
+
         let temp_path = temp_dir.path().to_path_buf();
         let binary_path = temp_path.join(cross_platform::get_ollama_executable_name());
-        
+
         // Write binary to temp file
         fs::write(&binary_path, binary_file.contents())
             .map_err(|e| GitAiError::Ollama(format!("Failed to write binary: {}", e)))?;
-        
+
         // Make executable on Unix systems
         #[cfg(unix)]
         {
@@ -60,10 +63,10 @@ impl OllamaBinary {
             perms.set_mode(0o755);
             fs::set_permissions(&binary_path, perms)?;
         }
-        
+
         self.temp_dir = Some(temp_path);
         self.binary_path = Some(binary_path.clone());
-        
+
         Ok(binary_path)
     }
 }
