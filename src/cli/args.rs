@@ -135,7 +135,7 @@ fn get_default_model() -> String {
     }
 
     // Fallback to a default model if no models are available or Ollama is not running
-    "gemma4:4b".to_string()
+    "gemma4:latest".to_string()
 }
 
 /// Command-line arguments for git-ai-commit
@@ -182,7 +182,7 @@ pub struct Args {
     /// AI model to use for commit message generation
     ///
     /// If not specified, the tool will use the value from the config file,
-    /// or fall back to the last model used with Ollama, or 'gemma4:4b' as the final fallback.
+    /// or fall back to the last model used with Ollama, or 'gemma4:latest' as the final fallback.
     ///
     /// Examples:
     ///   --model llama3

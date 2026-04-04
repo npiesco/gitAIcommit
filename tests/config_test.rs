@@ -10,7 +10,7 @@ fn test_load_config_defaults() {
     // Test loading non-existent config should return defaults
     let config = Config::load_from_path(&config_path).unwrap();
     assert_eq!(config.provider, "ollama");
-    assert_eq!(config.model, "gemma4:4b");
+    assert_eq!(config.model, "gemma4:latest");
     assert_eq!(config.base_url, None);
     assert_eq!(config.api_key, None);
     assert_eq!(config.max_files, 10);

@@ -64,7 +64,7 @@ USAGE:
     git-ai-commit [OPTIONS]
 
 OPTIONS:
-    -m, --model <MODEL>             AI model to use [default: gemma4:4b]
+    -m, --model <MODEL>             AI model to use [default: gemma4:latest]
     -f, --max-files <COUNT>         Max files to include in diff [default: 10]
     -l, --max-diff-lines <LINES>    Max diff lines per file [default: 50]
     -d, --dry-run                   Show what would be committed
@@ -83,7 +83,7 @@ OPTIONS:
 Create `~/.config/git-ai-commit/config.toml`:
 
 ```toml
-model = "gemma4:4b"
+model = "gemma4:latest"
 max_files = 15
 max_diff_lines = 100
 timeout_seconds = 120
@@ -94,7 +94,7 @@ confirm = true
 
 ```bash
 # Override default model
-export GIT_AI_COMMIT_MODEL=gemma4:4b
+export GIT_AI_COMMIT_MODEL=gemma4:latest
 
 # Set custom Ollama port
 export OLLAMA_HOST=http://localhost:11434
@@ -134,7 +134,7 @@ When using the `--add-unstaged` flag, the tool will:
 
 The tool will automatically download the specified model if it's not already available. Supported models include:
 
-- `gemma4:4b` (default) - Best balance of performance and quality
+- `gemma4:latest` (default) - Best balance of performance and quality
 - `gemma4:1b` - Faster but less accurate than 4b
 - `tinyllama:latest` - Very fast but less accurate
 
