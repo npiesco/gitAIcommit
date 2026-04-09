@@ -140,23 +140,26 @@ fn get_default_model() -> String {
 
 /// Command-line arguments for git-ai-commit
 ///
-/// This tool generates AI-powered commit messages by analyzing your git changes.
-/// It uses an embedded Ollama instance to generate meaningful commit messages.
+/// This tool generates AI-assisted commit messages and PR drafts by analyzing git changes.
+/// It supports provider-aware commit, push, and pull request flows.
 #[derive(Parser, Debug)]
 #[command(
     name = "git-ai-commit",
-    about = "Generate AI-powered commit messages using embedded Ollama",
+    about = "Generate AI-assisted commit messages, pushes, and pull requests",
     long_about = "\
-Generate meaningful commit messages by analyzing your git changes with AI.\n\n\
+Generate meaningful commit messages and pull request drafts by analyzing your git changes with AI.\n\n\
 USAGE EXAMPLES:\n\n\
   # Basic usage (staged changes only)\n  $ git-ai-commit\n\n\
   # Stage all changes before committing\n  $ git-ai-commit --add-unstaged\n\n\
   # Preview changes without committing\n  $ git-ai-commit --dry-run\n\n\
-  # Use a specific AI model\n  $ git-ai-commit --model llama3\n\n\
+  # Use a specific provider and model\n  $ git-ai-commit --provider ollama --model gemma4:latest\n\n\
+  # Use an OpenAI-compatible local endpoint\n  $ git-ai-commit --provider openai-compatible --model tinyllama:latest --base-url http://localhost:11434\n\n\
+  # Generate a pull request draft instead of a commit\n  $ git-ai-commit --pr --dry-run\n\n\
+  # Commit, push, and open or reuse a PR\n  $ git-ai-commit --push-pr\n\n\
   # Show verbose output for debugging\n  $ git-ai-commit --verbose\n\n\
   # Use a custom prompt template\n  $ git-ai-commit --template ./my-prompt.txt\n\n\
   # Increase diff context for better messages\n  $ git-ai-commit --max-files 20 --max-diff-lines 100\n\n\
-  # Run with custom Ollama port\n  $ git-ai-commit --port 12345\n\n\
+  # Run against a local provider on a custom port\n  $ git-ai-commit --port 12345\n\n\
 For more information on each option, use --help.",
     version,
     propagate_version = true
@@ -179,10 +182,11 @@ pub struct Args {
     )]
     pub provider: String,
 
-    /// AI model to use for commit message generation
+    /// AI model to use for commit message or PR generation
     ///
-    /// If not specified, the tool will use the value from the config file,
-    /// or fall back to the last model used with Ollama, or 'gemma4:latest' as the final fallback.
+    /// For Ollama, if not specified, the tool will use the value from the config file,
+    /// or fall back to the last model used with Ollama, or `gemma4:latest` as the final fallback.
+    /// For non-Ollama providers, pass `--model` explicitly or set it in config.
     ///
     /// Examples:
     ///   --model llama3
@@ -191,6 +195,7 @@ pub struct Args {
         short,
         long,
         default_value_t = get_default_model(),
+        hide_default_value = true,
         value_name = "MODEL",
         value_parser = |s: &str| {
             let s = s.to_string();
@@ -263,7 +268,7 @@ pub struct Args {
     ///   --confirm  # Ask for confirmation before committing
     #[arg(
         long = "confirm",
-        help = "Ask for confirmation before committing (default: false)",
+        help = "Ask for confirmation before committing",
         help_heading = "Commit Options",
         default_value_t = true,
         action = clap::ArgAction::SetFalse
@@ -272,8 +277,8 @@ pub struct Args {
 
     /// Path to a custom prompt template file
     ///
-    /// The template should be a text file that will be used to generate the
-    /// prompt sent to the AI. Use placeholders like {diff} and {status}.
+    /// The template should be a text file used to generate the prompt sent to the AI.
+    /// Custom templates receive the repo analysis context through the prompt builder.
     ///
     /// Example:
     ///   --template ./my-custom-prompt.txt
@@ -328,11 +333,10 @@ pub struct Args {
     #[arg(short, long, help_heading = "Debug Options")]
     pub verbose: bool,
 
-    /// Custom port for the Ollama server
+    /// Port for the local provider server
     ///
-    /// Change this if you're running Ollama on a non-default port.
-    /// Only affects the embedded Ollama instance.
-    /// Port for the Ollama server
+    /// Change this if your local provider is running on a non-default port.
+    /// This is primarily used for local Ollama and local OpenAI-compatible endpoints.
     ///
     /// Default: 11434
     #[arg(
@@ -365,20 +369,19 @@ pub struct Args {
     )]
     pub timeout_seconds: u64,
 
-    /// Automatically stage all unstaged changes before generating commit message
+    /// Automatically stage all unstaged changes before generation
     ///
-    /// This is equivalent to running 'git add .' before generating the commit.
-    /// The tool will show you what changes will be staged before proceeding.
+    /// This stages unstaged changes before commit or PR generation.
     ///
     /// Example:
     ///   --add-unstaged
     #[arg(short = 'a', long, help_heading = "Staging Options")]
     pub add_unstaged: bool,
 
-    /// List all available Ollama models and exit
+    /// List all available models for the selected provider and exit
     ///
-    /// This will connect to the Ollama server and list all locally available models.
-    /// The tool will exit after displaying the list.
+    /// This connects to the selected provider backend and prints its visible models.
+    /// The tool exits after displaying the list.
     ///
     /// Example:
     ///   --list-models
