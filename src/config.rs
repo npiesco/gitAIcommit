@@ -43,7 +43,7 @@ fn default_provider() -> String {
 }
 
 fn default_model() -> String {
-    "gemma4:latest".to_string()
+    "qwen3-coder:latest".to_string()
 }
 
 fn default_max_files() -> usize {

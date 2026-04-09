@@ -135,7 +135,7 @@ fn get_default_model() -> String {
     }
 
     // Fallback to a default model if no models are available or Ollama is not running
-    "gemma4:latest".to_string()
+    "qwen3-coder:latest".to_string()
 }
 
 /// Command-line arguments for git-ai-commit
@@ -152,7 +152,7 @@ USAGE EXAMPLES:\n\n\
   # Basic usage (staged changes only)\n  $ git-ai-commit\n\n\
   # Stage all changes before committing\n  $ git-ai-commit --add-unstaged\n\n\
   # Preview changes without committing\n  $ git-ai-commit --dry-run\n\n\
-  # Use a specific provider and model\n  $ git-ai-commit --provider ollama --model gemma4:latest\n\n\
+  # Use a specific provider and model\n  $ git-ai-commit --provider ollama --model qwen3-coder:latest\n\n\
   # Use an OpenAI-compatible local endpoint\n  $ git-ai-commit --provider openai-compatible --model tinyllama:latest --base-url http://localhost:11434\n\n\
   # Generate a pull request draft instead of a commit\n  $ git-ai-commit --pr --dry-run\n\n\
   # Commit, push, and open or reuse a PR\n  $ git-ai-commit --push-pr\n\n\
@@ -185,7 +185,7 @@ pub struct Args {
     /// AI model to use for commit message or PR generation
     ///
     /// For Ollama, if not specified, the tool will use the value from the config file,
-    /// or fall back to the last model used with Ollama, or `gemma4:latest` as the final fallback.
+    /// or fall back to the last model used with Ollama, or `qwen3-coder:latest` as the final fallback.
     /// For non-Ollama providers, pass `--model` explicitly or set it in config.
     ///
     /// Examples:

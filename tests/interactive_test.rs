@@ -123,6 +123,69 @@ fn parse_output_field(raw: &str, prefix: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+fn init_named_repo(name: &str) -> tempfile::TempDir {
+    let temp_dir = tempdir().expect("Failed to create temp dir");
+    let repo_path = temp_dir.path();
+
+    Command::new("git")
+        .args(["init"])
+        .current_dir(repo_path)
+        .status()
+        .expect("Failed to initialize git repo");
+
+    Command::new("git")
+        .args(["config", "user.name", "Test User"])
+        .current_dir(repo_path)
+        .status()
+        .expect("Failed to configure git user name");
+
+    Command::new("git")
+        .args(["config", "user.email", "test@example.com"])
+        .current_dir(repo_path)
+        .status()
+        .expect("Failed to configure git user email");
+
+    std::fs::write(
+        repo_path.join("src.txt"),
+        format!("base\n{name}\ninitial line\n"),
+    )
+    .expect("Failed to create test file");
+
+    Command::new("git")
+        .args(["add", "."])
+        .current_dir(repo_path)
+        .status()
+        .expect("Failed to add initial files");
+
+    Command::new("git")
+        .args(["commit", "-m", "Initial commit"])
+        .current_dir(repo_path)
+        .status()
+        .expect("Failed to create initial commit");
+
+    std::fs::write(
+        repo_path.join("src.txt"),
+        format!("base\n{name}\nupdated implementation line\nextra detail\n"),
+    )
+    .expect("Failed to modify test file");
+
+    Command::new("git")
+        .args(["add", "src.txt"])
+        .current_dir(repo_path)
+        .status()
+        .expect("Failed to stage modified file");
+
+    temp_dir
+}
+
+fn run_real_ollama_dry_run(repo_path: &std::path::Path, model: &str) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_git-ai-commit"))
+        .args(["--provider", "ollama", "--model", model, "--dry-run"])
+        .current_dir(repo_path)
+        .output()
+        .expect("Failed to run git-ai-commit against real Ollama")
+}
+
 #[tokio::test]
 async fn test_interactive_stage_unstaged() {
     // Create a temporary directory for the test repository
@@ -198,6 +261,50 @@ async fn test_interactive_stage_unstaged() {
 
     // Clean up
     temp_dir.close().expect("Failed to clean up temp dir");
+}
+
+#[tokio::test]
+#[ignore = "requires a real local Ollama daemon and large local models"]
+#[serial(ollama)]
+async fn test_ollama_gemma4_and_qwen3_coder_generate_commit_messages() {
+    let _ollama_manager = ensure_shared_test_ollama("gemma4:latest").await;
+    let client = OllamaClient::new(11434);
+    if !client
+        .has_model("qwen3-coder:latest")
+        .await
+        .expect("should check qwen3-coder availability")
+    {
+        client
+            .pull_model("qwen3-coder:latest")
+            .await
+            .expect("should pull qwen3-coder for the real integration test");
+    }
+
+    for model in ["gemma4:latest", "qwen3-coder:latest"] {
+        let temp_dir = init_named_repo(model);
+        let output = run_real_ollama_dry_run(temp_dir.path(), model);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert!(
+            output.status.success(),
+            "real ollama dry-run should succeed for model {model}\nstdout: {stdout}\nstderr: {stderr}"
+        );
+        assert!(
+            stdout.contains("[DRY RUN] Generated Commit Message (not committed):"),
+            "expected generated commit message heading for model {model}, got stdout: {stdout}"
+        );
+        assert!(
+            stdout.lines().any(|line| {
+                let trimmed = line.trim();
+                !trimmed.is_empty()
+                    && !trimmed.starts_with('[')
+                    && !trimmed.starts_with('=')
+                    && !trimmed.starts_with("AI Commit Message Generator")
+            }),
+            "expected non-empty commit message content for model {model}, got stdout: {stdout}"
+        );
+    }
 }
 
 #[tokio::test]

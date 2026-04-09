@@ -82,7 +82,7 @@ git-ai-commit --push-pr
 Default provider:
 
 ```bash
-git-ai-commit --provider ollama --model gemma4:latest
+git-ai-commit --provider ollama --model qwen3-coder:latest
 ```
 
 List local models:
@@ -197,7 +197,7 @@ Example:
 
 ```toml
 provider = "ollama"
-model = "gemma4:latest"
+model = "qwen3-coder:latest"
 base_url = "http://localhost:11434"
 api_key = ""
 max_files = 10
