@@ -3,8 +3,12 @@ use git_ai_commit::{
     cli::Args,
     commit::{commit_message_to_repo, sanitize_commit_message},
     formatting::PromptBuilder,
-    git::GitCollector,
+    git::{
+        branch_diff_stat, current_branch, detect_default_branch, ensure_push_branch,
+        preview_push_branch, push_current_branch, GitCollector,
+    },
     llm::{LlmManager, LlmManagerOptions},
+    pr::{create_pull_request_via_gh, PullRequestCreateResult, PullRequestDraft},
     utils::error::GitAiError,
 };
 use std::env;
@@ -83,11 +87,15 @@ async fn main() -> Result<()> {
     };
 
     // Ensure the model is available
-    println!("[CHECK] Checking if model '{}' is available...", args.model);
+    if let Some(message) = llm_manager.readiness_status(&args.model).message {
+        println!("{}", message);
+    }
     llm_manager.ensure_model_available(&args.model).await?;
 
     // Collect initial git information
-    println!("[ANALYZE] Analyzing git repository...");
+    if let Some(message) = llm_manager.analysis_status().message {
+        println!("{}", message);
+    }
     let mut git_info = git_collector.collect_all().await?;
 
     // If --add-unstaged flag is set, stage all unstaged changes and refresh git info
@@ -112,7 +120,24 @@ async fn main() -> Result<()> {
         }
     }
 
-    if git_info.is_empty(after_staging) {
+    let branch_pr_context = if (args.push_pr || args.pr) && git_info.is_empty(after_staging) {
+        let default_branch = detect_default_branch(&current_dir).await?;
+        let branch_diff = branch_diff_stat(&current_dir, &default_branch).await?;
+        if branch_diff.trim().is_empty() {
+            None
+        } else {
+            Some((default_branch, branch_diff))
+        }
+    } else {
+        None
+    };
+
+    if git_info.is_empty(after_staging) && branch_pr_context.is_none() {
+        if args.push_pr {
+            println!("[INFO] No branch changes to push or open as a pull request.");
+            return Ok(());
+        }
+
         println!("[INFO] No changes detected in the repository.");
         println!("Please make some changes and stage them before generating a commit message.");
         return Ok(());
@@ -124,13 +149,198 @@ async fn main() -> Result<()> {
         println!("{}", git_info.display());
     }
 
-    // Start Ollama if needed
-    println!("[START] Starting Ollama...");
+    // Start the selected provider backend if needed
+    if let Some(message) = llm_manager.startup_status().message {
+        println!("{}", message);
+    }
     llm_manager.ensure_running().await?;
 
-    // Generate commit message
-    println!("[GENERATE] Generating commit message...");
-    let prompt = prompt_builder.build(&git_info);
+    if args.push_pr {
+        let mut pr_context_branch = current_branch(&current_dir).await?;
+
+        if branch_pr_context.is_none() {
+            let starting_branch = current_branch(&current_dir).await?;
+            println!("[GENERATE] Generating commit message...");
+            let commit_prompt = prompt_builder.build(&git_info);
+
+            if args.verbose {
+                println!("[PROMPT] Generated commit prompt:");
+                println!("{}", commit_prompt);
+                println!("==============================");
+            }
+
+            let (commit_output, sanitized_commit_message) =
+                generate_sanitized_commit_message(&llm_manager, &commit_prompt).await?;
+
+            if args.dry_run {
+                let push_hint = args
+                    .context
+                    .as_deref()
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or(sanitized_commit_message.trim());
+                pr_context_branch = preview_push_branch(&current_dir, push_hint).await?;
+
+                println!("\n[DRY RUN] Push preview:");
+                println!("==============================");
+                if starting_branch == pr_context_branch {
+                    println!("BRANCH ACTION: ready");
+                } else {
+                    println!("BRANCH ACTION: switched");
+                }
+                println!("BRANCH: {}", pr_context_branch);
+                println!("REMOTE: origin");
+                println!("==============================");
+
+                println!("\n[DRY RUN] Generated Commit Message (not committed):");
+                println!("==============================");
+                println!("{}", sanitized_commit_message.trim());
+                println!("==============================");
+            } else {
+                println!("\n[COMMIT] Generated Commit Message:");
+                println!("==============================");
+                println!("{}", sanitized_commit_message.trim());
+                println!("==============================");
+
+                let push_hint = args
+                    .context
+                    .as_deref()
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or(sanitized_commit_message.trim());
+                let starting_branch = current_branch(&current_dir).await?;
+                let target_branch = ensure_push_branch(&current_dir, push_hint).await?;
+
+                let is_interactive = atty::is(atty::Stream::Stdout);
+
+                if !is_interactive || args.no_confirm {
+                    println!("[AUTO] Auto-confirmed (non-interactive terminal or --no-confirm)");
+                    commit_message_to_repo(&commit_output, &current_dir).await?;
+                } else {
+                    use dialoguer::Confirm;
+
+                    if Confirm::new()
+                        .with_prompt("Commit these changes?")
+                        .default(true)
+                        .interact()?
+                    {
+                        commit_message_to_repo(&commit_output, &current_dir).await?;
+                    } else {
+                        println!("[CANCEL] Commit cancelled by user");
+                        return Ok(());
+                    }
+                }
+                println!("[DONE] Commit created successfully!");
+
+                println!("[PUSH] Pushing current branch to origin...");
+                let pushed_branch = push_current_branch(&current_dir).await?;
+                pr_context_branch = pushed_branch.clone();
+                println!("[PUSH] Pushed branch:");
+                println!("==============================");
+                if starting_branch == target_branch {
+                    println!("BRANCH ACTION: ready");
+                } else {
+                    println!("BRANCH ACTION: switched");
+                }
+                println!("BRANCH: {}", pushed_branch);
+                println!("REMOTE: origin");
+                println!("==============================");
+            }
+        } else if !args.dry_run {
+            println!("[PUSH] Pushing current branch to origin...");
+            let pushed_branch = push_current_branch(&current_dir).await?;
+            pr_context_branch = pushed_branch.clone();
+            println!("[PUSH] Pushed branch:");
+            println!("==============================");
+            println!("BRANCH ACTION: ready");
+            println!("BRANCH: {}", pushed_branch);
+            println!("REMOTE: origin");
+            println!("==============================");
+        }
+
+        let (default_branch, pr_prompt) =
+            if let Some((default_branch, branch_diff)) = branch_pr_context.as_ref() {
+                (
+                    default_branch.clone(),
+                    prompt_builder.build_pr_from_branch_diff(
+                        default_branch,
+                        branch_diff,
+                        git_info.last_commit.as_deref(),
+                    ),
+                )
+            } else {
+                (
+                    detect_default_branch(&current_dir).await?,
+                    prompt_builder.build_pr(&git_info),
+                )
+            };
+
+        println!("[GENERATE] Generating pull request draft...");
+
+        if args.verbose {
+            println!("[PROMPT] Generated PR prompt:");
+            println!("{}", pr_prompt);
+            println!("==============================");
+        }
+
+        let pr_draft = generate_pull_request_draft(&llm_manager, &pr_prompt).await?;
+
+        if args.dry_run {
+            println!("\n[DRY RUN] Generated Pull Request Draft:");
+            println!("==============================");
+            println!("BRANCH: {}", pr_context_branch);
+            println!("BASE: {}", default_branch);
+            println!("{}", pr_draft.render());
+            println!("==============================");
+            println!("\nThis was a dry run. To actually commit, push, and create the PR, run without --dry-run");
+            return Ok(());
+        }
+
+        match create_pull_request_via_gh(&pr_draft, &default_branch, &current_dir) {
+            Ok(PullRequestCreateResult::Created { url }) => {
+                println!("\n[PULL REQUEST] Created pull request:");
+                println!("==============================");
+                println!("BRANCH: {}", pr_context_branch);
+                println!("BASE: {}", default_branch);
+                println!("TITLE: {}", pr_draft.title);
+                if !url.trim().is_empty() {
+                    println!("URL: {}", url.trim());
+                }
+                println!("==============================");
+            }
+            Ok(PullRequestCreateResult::Existing { url }) => {
+                println!("\n[PULL REQUEST] Existing pull request:");
+                println!("==============================");
+                println!("BRANCH: {}", pr_context_branch);
+                println!("BASE: {}", default_branch);
+                println!("TITLE: {}", pr_draft.title);
+                if !url.trim().is_empty() {
+                    println!("URL: {}", url.trim());
+                }
+                println!("==============================");
+            }
+            Err(error) => {
+                println!("\n[PULL REQUEST] Falling back to generated draft:");
+                println!("==============================");
+                println!("BRANCH: {}", pr_context_branch);
+                println!("BASE: {}", default_branch);
+                println!("{}", pr_draft.render());
+                println!("==============================");
+                println!("\n[INFO] gh pr create failed: {}", error);
+            }
+        }
+        return Ok(());
+    }
+
+    // Generate commit message or PR draft
+    if args.pr {
+        println!("[GENERATE] Generating pull request draft...");
+    } else {
+        println!("[GENERATE] Generating commit message...");
+    }
+    let prompt = if args.pr {
+        prompt_builder.build_pr(&git_info)
+    } else {
+        prompt_builder.build(&git_info)
+    };
 
     if args.verbose {
         println!("[PROMPT] Generated prompt:");
@@ -138,11 +348,92 @@ async fn main() -> Result<()> {
         println!("==============================");
     }
 
-    let commit_message = llm_manager.generate_commit(&prompt).await?;
-    let sanitized_commit_message = sanitize_commit_message(&commit_message);
+    if args.pr {
+        let (default_branch, pr_prompt) =
+            if let Some((default_branch, branch_diff)) = branch_pr_context.as_ref() {
+                (
+                    default_branch.clone(),
+                    prompt_builder.build_pr_from_branch_diff(
+                        default_branch,
+                        branch_diff,
+                        git_info.last_commit.as_deref(),
+                    ),
+                )
+            } else {
+                (detect_default_branch(&current_dir).await?, prompt)
+            };
+
+        let pr_draft = generate_pull_request_draft(&llm_manager, &pr_prompt).await?;
+
+        if args.dry_run {
+            println!("\n[DRY RUN] Generated Pull Request Draft:");
+            println!("==============================");
+            println!("BASE: {}", default_branch);
+            println!("{}", pr_draft.render());
+            println!("==============================");
+            println!("\nThis was a dry run. To actually create the PR, run the PR flow without --dry-run once PR creation is enabled.");
+            return Ok(());
+        }
+
+        match create_pull_request_via_gh(&pr_draft, &default_branch, &current_dir) {
+            Ok(PullRequestCreateResult::Created { url }) => {
+                println!("\n[PULL REQUEST] Created pull request:");
+                println!("==============================");
+                println!("BASE: {}", default_branch);
+                println!("TITLE: {}", pr_draft.title);
+                if !url.trim().is_empty() {
+                    println!("URL: {}", url.trim());
+                }
+                println!("==============================");
+            }
+            Ok(PullRequestCreateResult::Existing { url }) => {
+                println!("\n[PULL REQUEST] Existing pull request:");
+                println!("==============================");
+                println!("BASE: {}", default_branch);
+                println!("TITLE: {}", pr_draft.title);
+                if !url.trim().is_empty() {
+                    println!("URL: {}", url.trim());
+                }
+                println!("==============================");
+            }
+            Err(error) => {
+                println!("\n[PULL REQUEST] Falling back to generated draft:");
+                println!("==============================");
+                println!("BASE: {}", default_branch);
+                println!("{}", pr_draft.render());
+                println!("==============================");
+                println!("\n[INFO] gh pr create failed: {}", error);
+            }
+        }
+        return Ok(());
+    }
+
+    let (model_output, sanitized_commit_message) =
+        generate_sanitized_commit_message(&llm_manager, &prompt).await?;
 
     // In dry-run mode, just show the message without committing
     if args.dry_run {
+        if args.push {
+            let starting_branch = current_branch(&current_dir).await?;
+            let push_hint = args
+                .context
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or(sanitized_commit_message.trim());
+            let preview_branch = preview_push_branch(&current_dir, push_hint).await?;
+
+            println!("\n[DRY RUN] Push preview:");
+            println!("==============================");
+            if starting_branch == preview_branch {
+                println!("BRANCH ACTION: ready");
+            } else {
+                println!("BRANCH ACTION: switched");
+            }
+            println!("BRANCH: {}", preview_branch);
+            println!("REMOTE: origin");
+            println!("==============================");
+        }
+
         println!("\n[DRY RUN] Generated Commit Message (not committed):");
         println!("==============================");
         println!("{}", sanitized_commit_message.trim());
@@ -160,11 +451,24 @@ async fn main() -> Result<()> {
     // Check if we're in an interactive terminal
     let is_interactive = atty::is(atty::Stream::Stdout);
 
+    let push_plan = if args.push {
+        let push_hint = args
+            .context
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or(sanitized_commit_message.trim());
+        let starting_branch = current_branch(&current_dir).await?;
+        let target_branch = ensure_push_branch(&current_dir, push_hint).await?;
+        Some((starting_branch, target_branch))
+    } else {
+        None
+    };
+
     // Skip confirmation if not in an interactive terminal or if --no-confirm is set
     if !is_interactive || args.no_confirm {
         // Auto-confirm if not interactive
         println!("[AUTO] Auto-confirmed (non-interactive terminal or --no-confirm)");
-        commit_message_to_repo(&commit_message, &current_dir).await?;
+        commit_message_to_repo(&model_output, &current_dir).await?;
     } else {
         // Interactive confirmation
         use dialoguer::Confirm;
@@ -174,13 +478,28 @@ async fn main() -> Result<()> {
             .default(true)
             .interact()?
         {
-            commit_message_to_repo(&commit_message, &current_dir).await?;
+            commit_message_to_repo(&model_output, &current_dir).await?;
         } else {
             println!("[CANCEL] Commit cancelled by user");
             return Ok(());
         }
     }
     println!("[DONE] Commit created successfully!");
+
+    if let Some((starting_branch, target_branch)) = push_plan {
+        println!("[PUSH] Pushing current branch to origin...");
+        let pushed_branch = push_current_branch(&current_dir).await?;
+        println!("[PUSH] Pushed branch:");
+        println!("==============================");
+        if starting_branch == target_branch {
+            println!("BRANCH ACTION: ready");
+        } else {
+            println!("BRANCH ACTION: switched");
+        }
+        println!("BRANCH: {}", pushed_branch);
+        println!("REMOTE: origin");
+        println!("==============================");
+    }
 
     Ok(())
 }
@@ -193,4 +512,34 @@ async fn is_git_repository(path: &PathBuf) -> Result<bool> {
         .await?;
 
     Ok(output.status.success())
+}
+
+async fn generate_sanitized_commit_message(
+    llm_manager: &LlmManager,
+    prompt: &str,
+) -> Result<(String, String)> {
+    let first_output = llm_manager.generate_commit(prompt).await?;
+    let first_sanitized = sanitize_commit_message(&first_output);
+    if !first_sanitized.trim().is_empty() {
+        return Ok((first_output, first_sanitized));
+    }
+
+    println!("[RETRY] Empty commit message after sanitization, retrying generation...");
+    let second_output = llm_manager.generate_commit(prompt).await?;
+    let second_sanitized = sanitize_commit_message(&second_output);
+    Ok((second_output, second_sanitized))
+}
+
+async fn generate_pull_request_draft(
+    llm_manager: &LlmManager,
+    prompt: &str,
+) -> Result<PullRequestDraft> {
+    let first_output = llm_manager.generate_commit(prompt).await?;
+    if let Ok(draft) = PullRequestDraft::parse_or_normalize(&first_output) {
+        return Ok(draft);
+    }
+
+    println!("[RETRY] Invalid pull request draft response, retrying generation...");
+    let second_output = llm_manager.generate_commit(prompt).await?;
+    PullRequestDraft::parse_or_normalize(&second_output)
 }

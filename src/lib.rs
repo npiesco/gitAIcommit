@@ -10,6 +10,7 @@ pub mod formatting;
 pub mod git;
 pub mod llm;
 pub mod ollama;
+pub mod pr;
 pub mod utils;
 
 pub use cli::Args;
@@ -19,3 +20,4 @@ pub use formatting::PromptBuilder;
 pub use git::GitCollector;
 pub use llm::LlmManager;
 pub use ollama::OllamaManager;
+pub use pr::PullRequestDraft;

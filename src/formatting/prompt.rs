@@ -94,6 +94,46 @@ impl PromptBuilder {
         self.template.replace("{CONTEXT}", &context)
     }
 
+    pub fn build_pr(&self, git_info: &GitInfo) -> String {
+        let context = self.build_pr_prompt_context(git_info);
+
+        if self.include_repo_metadata {
+            self.template.replace("{CONTEXT}", &context)
+        } else {
+            Self::pr_template().replace("{CONTEXT}", &context)
+        }
+    }
+
+    pub fn build_pr_from_branch_diff(
+        &self,
+        base_branch: &str,
+        branch_diff: &str,
+        recent_commit: Option<&str>,
+    ) -> String {
+        let mut context = String::new();
+        context.push_str(&format!(
+            "Branch diff summary against {}:\n{}\n",
+            base_branch,
+            truncate_for_prompt(branch_diff.trim(), self.max_diff_lines)
+        ));
+
+        if let Some(last_commit) = recent_commit
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            context.push_str("\n\nRecent commits:\n");
+            context.push_str(&truncate_for_prompt(last_commit, self.max_diff_lines));
+        }
+
+        self.add_user_context(&mut context);
+
+        if self.include_repo_metadata {
+            self.template.replace("{CONTEXT}", &context)
+        } else {
+            Self::pr_template().replace("{CONTEXT}", &context)
+        }
+    }
+
     fn build_default_prompt_context(&self, git_info: &GitInfo) -> String {
         let mut context = String::new();
         self.add_default_staged_diff_context(&mut context, git_info);
@@ -137,6 +177,14 @@ impl PromptBuilder {
         }
 
         self.add_staged_diff_details(&mut context, &staged_stats);
+        self.add_user_context(&mut context);
+        context
+    }
+
+    fn build_pr_prompt_context(&self, git_info: &GitInfo) -> String {
+        let mut context = String::new();
+        self.add_default_staged_diff_context(&mut context, git_info);
+        self.add_recent_commit_context(&mut context, git_info);
         self.add_user_context(&mut context);
         context
     }
@@ -214,6 +262,15 @@ impl PromptBuilder {
         }
     }
 
+    fn add_recent_commit_context(&self, context: &mut String, git_info: &GitInfo) {
+        if let Some(last_commit) = git_info.last_commit.as_deref().map(str::trim) {
+            if !last_commit.is_empty() {
+                context.push_str("\n\nRecent commits:\n");
+                context.push_str(&truncate_for_prompt(last_commit, self.max_diff_lines));
+            }
+        }
+    }
+
     /// Helper method to add file changes to the context with proper formatting
     fn add_file_changes_to_context(&self, context: &mut String, changes: &[&FileChange]) {
         let mut staged_context = String::new();
@@ -239,6 +296,16 @@ impl PromptBuilder {
 
     fn default_template() -> String {
         r#"Generate a git commit message in plain text Lore format only. Base it on this staged diff summary:
+
+{CONTEXT}"#
+            .to_string()
+    }
+
+    fn pr_template() -> String {
+        r#"Generate a pull request title and body from this conversation and diff summary. Output plain text in this format exactly:
+TITLE: <title>
+BODY:
+<body markdown>
 
 {CONTEXT}"#
             .to_string()

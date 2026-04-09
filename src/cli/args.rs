@@ -289,6 +289,24 @@ pub struct Args {
     #[arg(long, value_name = "TEXT", help_heading = "Customization")]
     pub context: Option<String>,
 
+    /// Generate a pull request title and body instead of a commit message
+    ///
+    /// In dry-run mode this prints a PR draft to stdout.
+    #[arg(long, help_heading = "Commit Options")]
+    pub pr: bool,
+
+    /// Push the current branch to origin after creating the commit
+    ///
+    /// This uses `git push --set-upstream origin <current-branch>`.
+    #[arg(long, help_heading = "Commit Options")]
+    pub push: bool,
+
+    /// Create a commit, push the branch, and open a pull request in one flow
+    ///
+    /// This combines the existing commit, push, and PR paths into one command.
+    #[arg(long = "push-pr", help_heading = "Commit Options")]
+    pub push_pr: bool,
+
     /// Show the git analysis and generated commit message without committing
     ///
     /// This is useful for previewing what the commit would look like.

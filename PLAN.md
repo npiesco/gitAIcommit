@@ -32,6 +32,34 @@ PR, branch, and provider orchestration. Each section now points at the exact
 - Reuse `truncate_for_prompt()` for PR prompt payload limits
 - Write PR body to a temp file and call `gh pr create`
 - Fallback to printing a draft when `gh` is missing or fails
+- Completed TDD slice: `--pr --dry-run` now generates a real PR draft through the existing provider path
+  - `tests/interactive_test.rs` — added `test_pr_dry_run_generates_pr_title_and_body_from_repo_context`
+  - `tests/cli_args_test.rs` — added `test_pr_flag`
+  - `src/cli/args.rs` — added the `--pr` flag
+  - `src/formatting/prompt.rs` — added `PromptBuilder::build_pr()` and a `crabclaw`-style `TITLE:` / `BODY:` PR prompt contract built from staged diff summary, recent commit context, and optional user context
+  - `src/pr.rs` — added `PullRequestDraft::parse_or_normalize()` so weak local-model output is normalized back into the `TITLE:` / `BODY:` shape instead of inventing a second CLI formatter
+  - `src/main.rs` — routes `--pr` through the existing provider-neutral `LlmManager` and prints a PR draft in dry-run mode instead of entering the commit path
+  - Leveraged `crabclaw`'s `run_pr()` prompt contract from `/home/npiesco/crabclaw/rust/crates/claw-cli/src/main.rs:2656-2665`
+  - Leveraged `crabclaw`'s title/body parsing boundary from `/home/npiesco/crabclaw/rust/crates/claw-cli/src/main.rs:2314-2322`
+  - Reused the same truncation philosophy from `/home/npiesco/crabclaw/rust/crates/claw-cli/src/main.rs:2301-2308` through `gitAICommit`'s existing `truncate_for_prompt()` path instead of inventing another limiter
+- Completed TDD slice: non-dry-run `--pr` now attempts real `gh pr create` and falls back to the generated draft when creation fails
+  - `tests/interactive_test.rs` — added `test_pr_generation_falls_back_to_draft_when_gh_create_fails`
+  - `src/pr.rs` — added `create_pull_request_via_gh()` which writes the generated PR body to a real temp file, calls the real `gh pr create --title ... --body-file ...` path, and disables interactive prompting via `GH_PROMPT_DISABLED=1` and `GIT_TERMINAL_PROMPT=0`
+  - `src/pr.rs` — tightened `PullRequestDraft` cleanup so repeated `Title:` / `Body:` echoes from weaker local models are stripped at the same parsing boundary instead of leaking into the final draft
+  - `src/main.rs` — now attempts real PR creation for `--pr` outside dry-run and falls back to printing the normalized draft, plus an informational `gh pr create failed: ...` message, when the real `gh` command fails in the repository
+  - Leveraged `crabclaw`'s real `gh pr create --body-file` flow from `/home/npiesco/crabclaw/rust/crates/claw-cli/src/main.rs:2667-2684` instead of inventing a new executor
+- Completed TDD slice: PR generation now threads the detected default branch into the real PR path
+  - `tests/interactive_test.rs` — added `test_pr_fallback_surfaces_detected_default_base_branch`, which creates a real bare `origin`, pushes `main`, clones it, switches to a feature branch, runs the actual binary, and verifies the fallback PR output includes `BASE: main`
+  - `src/main.rs` — detects the default branch before PR creation and surfaces it in dry-run, success, and fallback PR output
+  - `src/pr.rs` — `create_pull_request_via_gh()` now passes `--base <default_branch>` to the real `gh pr create` invocation instead of relying on GitHub CLI defaults
+  - Leveraged `crabclaw`'s default-branch detection source from `/home/npiesco/crabclaw/rust/crates/commands/src/lib.rs:1189-1203`
+  - Leveraged `crabclaw`'s helper shape from `/home/npiesco/crabclaw/rust/crates/commands/src/lib.rs:1246-1270`
+  - Reused `crabclaw`'s real PR creation boundary from `/home/npiesco/crabclaw/rust/crates/claw-cli/src/main.rs:2667-2684`, adapting it to explicitly target the detected base branch
+- Completed hardening slice discovered during regression: local OpenAI-compatible responses that return an empty body now fall back to the native Ollama path
+  - `src/llm/mod.rs` — `OpenAiCompatibleManager::generate_commit()` now routes empty local OpenAI-compatible responses through `generate_via_ollama_native()` instead of failing with `OpenAI-compatible provider returned an empty response`
+  - This keeps the provider boundary aligned with the existing local-Ollama transport handling instead of weakening the real integration tests
+- Next TDD target:
+  - complete the happy-path PR creation UX by surfacing the created PR URL cleanly, then move on to combined commit+push+PR orchestration
 
 ---
 
@@ -57,6 +85,76 @@ PR, branch, and provider orchestration. Each section now points at the exact
 - Port the commit/push/PR orchestration flow from `handle_commit_push_pr_slash_command()`
 - Reuse the branch diff check against `<default>...HEAD`
 - Reuse `gh pr view --json url` fallback when PR already exists
+- Completed TDD slice: `--push` now commits and pushes the current feature branch to a real local `origin`
+  - `tests/interactive_test.rs` — added `test_push_flag_pushes_committed_change_to_real_remote_feature_branch`, which creates a real bare remote, clones it, switches to a feature branch, runs the actual binary, and verifies the pushed remote branch HEAD matches local HEAD
+  - `tests/cli_args_test.rs` — added `test_push_flag` and extended combined-flag coverage
+  - `src/cli/args.rs` — added the `--push` flag
+  - `src/git/repository.rs` — added `push_current_branch()` and promoted `current_branch()` into the reusable git helper layer instead of reimplementing branch lookup inside `main.rs`
+  - `src/git/mod.rs` — exports `push_current_branch()` and `current_branch()`
+  - `src/main.rs` — after a successful real commit, `--push` now calls the shared git helper and surfaces a deterministic `[PUSH]` result block
+  - Leveraged `crabclaw`'s current-branch and push orchestration direction from `/home/npiesco/crabclaw/rust/crates/commands/src/lib.rs:1089-1125`
+  - Leveraged `crabclaw`'s helper layer shape from `/home/npiesco/crabclaw/rust/crates/commands/src/lib.rs:1207-1232` instead of adding ad hoc git calls in the CLI flow
+- Completed TDD slice: `--push` now auto-creates and switches to a slugified feature branch when invoked from the default branch
+  - `tests/interactive_test.rs` — added `test_push_flag_from_default_branch_creates_and_pushes_slugified_feature_branch`, which starts on `main`, runs the actual binary with `--push`, and verifies the flow switched to and pushed a real slugified branch derived from user context
+  - `src/git/repository.rs` — added `ensure_push_branch()` plus direct ports of `build_branch_name()` and `slugify()` into the reusable git helper layer
+  - `src/git/mod.rs` — exports `ensure_push_branch()`
+  - `src/main.rs` — before pushing, the `--push` path now ensures it is off the detected default branch, using user context first and sanitized commit message second as the branch-name hint
+  - Leveraged `crabclaw`'s default-branch push safety flow from `/home/npiesco/crabclaw/rust/crates/commands/src/lib.rs:1089-1101`
+  - Leveraged `crabclaw`'s branch naming helpers from `/home/npiesco/crabclaw/rust/crates/commands/src/lib.rs:1288-1345` instead of inventing a different slug strategy
+- Completed TDD slice: `--push-pr` now runs the real combined commit, push, and PR flow end to end
+  - `tests/interactive_test.rs` — added `test_push_pr_from_default_branch_commits_pushes_and_falls_back_to_pr_draft`, which creates a real bare remote, starts on `main`, runs the actual binary with `--push-pr`, verifies a real commit was created, verifies the flow switched to and pushed a real slugified branch, and verifies PR creation falls back to a generated `TITLE:` / `BODY:` draft when `gh` cannot create the PR
+  - `tests/cli_args_test.rs` — added `test_push_pr_flag` and extended default/combined flag coverage to include `--push-pr`
+  - `src/cli/args.rs` — added the `--push-pr` flag as a first-class combined orchestration path
+  - `src/main.rs` — added the real combined flow: generate a commit message, create the commit, reuse `ensure_push_branch()` and `push_current_branch()`, then generate a PR draft and route it through the existing `gh pr create` / fallback path
+  - `src/main.rs` — added `generate_sanitized_commit_message()` with a logged retry when a weak local-model response sanitizes to empty, fixing the real regression surfaced in `test_push_flag_pushes_committed_change_to_real_remote_feature_branch` during full-suite validation
+  - Leveraged `crabclaw`'s `handle_commit_push_pr_slash_command()` orchestration flow from `/home/npiesco/crabclaw/rust/crates/commands/src/lib.rs:1089-1157` instead of inventing a second commit/push/PR pipeline
+  - Reused the already-ported branch safety helpers derived from `/home/npiesco/crabclaw/rust/crates/commands/src/lib.rs:1288-1345`
+- Completed TDD slice: `--push-pr` now works when the worktree is clean but the current feature branch is already ahead of the default branch
+  - `tests/interactive_test.rs` — added `test_push_pr_with_clean_worktree_uses_existing_branch_commits`, which creates a real bare remote, pushes `main`, creates and commits on a real feature branch, runs the actual binary with `--push-pr` from a clean worktree, and verifies the flow does not exit early as “no changes”, pushes the existing branch, and falls back to a generated PR draft
+  - `src/git/repository.rs` — added `branch_diff_stat()`, which computes a real `git diff --stat <default>...HEAD` summary for branch-ahead PR generation
+  - `src/git/mod.rs` — exports `branch_diff_stat()`
+  - `src/formatting/prompt.rs` — added `build_pr_from_branch_diff()`, which reuses the existing PR prompt contract and truncation path but feeds it branch diff context instead of staged-worktree context
+  - `src/main.rs` — before the old empty-worktree early return, the `--push-pr` path now detects default branch and checks whether the current branch is already ahead; if it is, the flow skips commit generation, reuses `push_current_branch()`, and generates the PR draft from branch diff context instead of bailing out
+  - `src/main.rs` — added `generate_pull_request_draft()` with a logged retry when a weak local-model response cannot be parsed into `TITLE:` / `BODY:`, fixing the real regression surfaced in `test_pr_fallback_surfaces_detected_default_base_branch` during full-suite validation
+  - Leveraged `crabclaw`'s combined orchestration direction from `/home/npiesco/crabclaw/rust/crates/commands/src/lib.rs:1089-1157` instead of inventing a separate clean-worktree PR path
+  - Leveraged `crabclaw`'s branch comparison shape from `/home/npiesco/crabclaw/rust/crates/commands/src/lib.rs:1117-1126` by checking branch state against `<default>...HEAD` rather than relying only on staged worktree status
+- Completed TDD slice: plain `--pr` now works when the worktree is clean but the current feature branch is already ahead of the default branch
+  - `tests/interactive_test.rs` — added `test_pr_dry_run_with_clean_worktree_uses_existing_branch_commits`, which creates a real bare remote, pushes `main`, creates and commits on a real feature branch, runs the actual binary with `--pr --dry-run` from a clean worktree, and verifies the flow generates a PR draft against `main` instead of exiting as “No changes detected in the repository.”
+  - `src/main.rs` — the branch-diff PR context gate now applies to plain `--pr` as well as `--push-pr`, so clean branches that are ahead of default reuse the same `branch_diff_stat()` path instead of falling through to the generic empty-worktree exit
+  - `src/main.rs` — the plain `--pr` execution path now reuses `build_pr_from_branch_diff()` when branch diff context is available, keeping the prompt contract identical to the already-ported clean-worktree `--push-pr` path instead of inventing a second PR-only prompt
+  - Ported the same `crabclaw` branch comparison behavior from `/home/npiesco/crabclaw/rust/crates/commands/src/lib.rs:1117-1126` that already drives the clean-worktree `--push-pr` path, extending it to plain PR generation instead of treating `--pr` as staged-worktree-only
+- Completed TDD slice: `--push-pr` now reports the combined-flow skip reason when the worktree is clean and the current branch is not ahead of the default branch
+  - `tests/interactive_test.rs` — added `test_push_pr_with_no_branch_changes_reports_combined_skip_reason`, which creates a real bare remote, clones `main`, switches to a real feature branch with no commits ahead, runs the actual binary with `--push-pr`, and verifies the flow surfaces the combined skip reason instead of the generic empty-repository message
+  - `src/main.rs` — when `--push-pr` sees no staged/worktree changes and `branch_diff_stat()` also shows no `<default>...HEAD` changes, it now prints `[INFO] No branch changes to push or open as a pull request.` and exits cleanly instead of falling through to the generic “No changes detected in the repository” path
+  - Leveraged `crabclaw`'s `handle_commit_push_pr_slash_command()` skip behavior from `/home/npiesco/crabclaw/rust/crates/commands/src/lib.rs:1143-1149` instead of inventing another empty-repository branch in the CLI flow
+- Completed TDD slice: `--push-pr --dry-run` now previews the slugified feature branch it would use without mutating the repo
+  - `tests/interactive_test.rs` — added `test_push_pr_dry_run_previews_slugified_branch_without_switching`, which creates a real bare remote, runs the actual binary from `main` with staged changes and `--push-pr --dry-run`, verifies the repo stays on `main`, and verifies the output previews the slugified feature branch name instead of incorrectly showing `BRANCH: main`
+  - `src/git/repository.rs` — added `preview_push_branch()`, which reuses the same default-branch and branch-name logic as `ensure_push_branch()` but does not switch branches
+  - `src/git/mod.rs` — exports `preview_push_branch()`
+  - `src/main.rs` — in the combined dry-run path, after commit-message generation, the CLI now previews the branch it would push by calling `preview_push_branch()` with the same context-first / commit-message-second hint that the real push flow already uses
+  - Leveraged `crabclaw`'s shared branch naming flow from `/home/npiesco/crabclaw/rust/crates/commands/src/lib.rs:1121-1129` and `/home/npiesco/crabclaw/rust/crates/commands/src/lib.rs:1314-1345` instead of inventing a separate dry-run branch naming rule
+- Completed TDD slice: `--push-pr --dry-run` now surfaces the push preview block and branch-action decision explicitly
+  - `tests/interactive_test.rs` — extended `test_push_pr_dry_run_previews_slugified_branch_without_switching` so the real CLI must print `[DRY RUN] Push preview:` and `BRANCH ACTION: switched` when running from `main`, while still leaving the repository on `main`
+  - `src/main.rs` — in the combined dry-run path, after `preview_push_branch()` resolves the non-mutating target branch, the CLI now prints the same push-preview structure as the real push flow, including `BRANCH ACTION: ready|switched`, `BRANCH: ...`, and `REMOTE: origin`
+  - Ported `crabclaw`'s branch-action output shape from `/home/npiesco/crabclaw/rust/crates/commands/src/lib.rs:1206` and continued reusing the shared branch naming flow from `/home/npiesco/crabclaw/rust/crates/commands/src/lib.rs:1121-1129` and `/home/npiesco/crabclaw/rust/crates/commands/src/lib.rs:1314-1345` instead of inventing a separate combined dry-run preview contract
+- Completed TDD slice: `--push --dry-run` now previews the slugified feature branch it would use without mutating the repo
+  - `tests/interactive_test.rs` — added `test_push_dry_run_previews_slugified_branch_without_switching`, which creates a real bare remote, runs the actual binary from `main` with staged changes and `--push --dry-run`, verifies the repo stays on `main`, and verifies the output previews the slugified feature branch name instead of behaving like a plain commit dry-run
+  - `src/main.rs` — in the plain push dry-run path, the CLI now emits a `[DRY RUN] Push preview:` block using `preview_push_branch()` before printing the generated commit message, so the preview matches the real push flow without switching branches
+  - Reused the same `preview_push_branch()` helper and therefore the same `crabclaw`-derived branch naming flow from `/home/npiesco/crabclaw/rust/crates/commands/src/lib.rs:1121-1129` and `/home/npiesco/crabclaw/rust/crates/commands/src/lib.rs:1314-1345` instead of inventing a separate dry-run rule for `--push`
+- Completed TDD slice: `--push --dry-run` now previews whether the real flow would stay on the current branch or switch to a slugified feature branch
+  - `tests/interactive_test.rs` — extended `test_push_dry_run_previews_slugified_branch_without_switching` to verify the real CLI output includes `BRANCH ACTION: switched` when running from `main`, while still leaving the repository on `main`
+  - `src/main.rs` — the plain push dry-run preview now compares `current_branch()` to `preview_push_branch()` and prints `BRANCH ACTION: ready` or `BRANCH ACTION: switched`, so the dry-run preview surfaces the same branch transition decision as the real push path
+  - Leveraged `crabclaw`'s branch-action output shape from `/home/npiesco/crabclaw/rust/crates/commands/src/lib.rs:1206` while continuing to reuse the shared branch naming flow from `/home/npiesco/crabclaw/rust/crates/commands/src/lib.rs:1121-1129` and `/home/npiesco/crabclaw/rust/crates/commands/src/lib.rs:1314-1345`
+- Completed TDD slice: real GitHub-backed `--push-pr` now creates a PR on the first run and surfaces the existing PR on the second run
+  - `tests/interactive_test.rs` — added `test_push_pr_with_real_github_repo_creates_then_reuses_pull_request`, which creates a disposable private GitHub repo with `gh`, clones it into `/tmp`, stages a real change, runs the actual binary with `--push-pr`, verifies a real PR is created, then runs the actual binary with `--pr` from the clean feature branch and verifies the existing PR URL is surfaced on the second run
+  - `tests/interactive_test.rs` — added `DisposableGithubRepo`, `github_login()`, and the live-URL parsing helpers needed to create and tear down the disposable private repo without introducing stubs or mock GitHub behavior
+  - `src/pr.rs` — changed `create_pull_request_via_gh()` to return `PullRequestCreateResult::{Created, Existing}` and ported the `gh pr create` -> `gh pr view --json url` fallback shape so the app can distinguish a newly created PR from an already-open one
+  - `src/main.rs` — both the plain `--pr` and combined `--push-pr` paths now surface `[PULL REQUEST] Created pull request:` and `[PULL REQUEST] Existing pull request:` explicitly, including the real PR URL when `gh` returns one
+  - `src/main.rs` — fixed the orchestration order the live GitHub test exposed: when `--push` or `--push-pr` starts on the default branch, `ensure_push_branch()` now runs before `commit_message_to_repo()` so the real commit lands on the feature branch instead of on `main`
+  - Ported `crabclaw`'s existing-PR fallback behavior from `/home/npiesco/crabclaw/rust/crates/commands/src/lib.rs:1210-1243`, specifically the `gh pr create` failure path that immediately tries `gh pr view --json url`
+  - Ported `crabclaw`'s branch-first combined-flow ordering from `/home/npiesco/crabclaw/rust/crates/commands/src/lib.rs:1150-1188`, so branch creation/switching happens before the commit is written when the flow starts on the default branch
+- Next TDD target:
+  - decide whether the live GitHub-backed test should stay `#[ignore]` by default or be promoted into a dedicated opt-in CI job, now that the full disposable-repo lifecycle is proven end to end
 
 ---
 
@@ -125,8 +223,23 @@ PR, branch, and provider orchestration. Each section now points at the exact
     - `src/llm/mod.rs` — `OpenAiCompatibleManager::ensure_model_available()` now verifies the selected model against `/v1/models` before generation and fails with `Model '<name>' is not available for provider 'openai-compatible'`
     - `src/llm/mod.rs` — extracted `fetch_model_ids()` so list-models and readiness checks share the same provider-native discovery path instead of duplicating endpoint logic
     - Leveraged `crabclaw`'s provider-neutral dispatch boundary from `rust/crates/api/src/client.rs:21-90` and `rust/crates/api/src/providers/mod.rs:144-209` by moving readiness into the provider layer, not by adding another startup special-case in `main.rs`
+  - Completed TDD slice: provider-specific startup messaging now lives behind the provider-neutral manager
+    - `tests/interactive_test.rs` — added `test_openai_compatible_provider_does_not_print_ollama_startup_banner`
+    - `src/llm/mod.rs` — added `StartupStatus` and `LlmManager::startup_status()` so backend-specific startup messaging is emitted from the provider layer instead of hardcoded at the CLI boundary
+    - `src/main.rs` — now prints startup messaging only when the selected provider returns one, which keeps the Ollama banner for the Ollama backend and suppresses it for `openai-compatible`
+    - Leveraged `crabclaw`'s provider-neutral dispatch boundary from `rust/crates/api/src/client.rs:21-90` and `rust/crates/api/src/providers/mod.rs:144-209` by moving startup behavior behind the provider layer rather than adding another `if provider == ...` branch in `main.rs`
+  - Completed TDD slice: provider-specific model-check messaging now lives behind the provider-neutral manager
+    - `tests/interactive_test.rs` — added `test_openai_compatible_provider_does_not_print_ollama_model_check_banner`
+    - `src/llm/mod.rs` — added `ReadinessStatus` and `LlmManager::readiness_status()` so backend-specific readiness messaging is emitted from the provider layer instead of hardcoded at the CLI boundary
+    - `src/main.rs` — now prints the `[CHECK]` banner only when the selected provider returns one, which keeps the existing Ollama wording for Ollama and suppresses it for `openai-compatible`
+    - Leveraged `crabclaw`'s provider-neutral dispatch boundary from `rust/crates/api/src/client.rs:21-90` and `rust/crates/api/src/providers/mod.rs:144-209` by moving readiness wording behind the provider layer rather than adding another `if provider == ...` branch in `main.rs`
+  - Completed TDD slice: provider-specific analysis messaging now lives behind the provider-neutral manager
+    - `tests/interactive_test.rs` — added `test_openai_compatible_provider_does_not_print_analysis_banner`
+    - `src/llm/mod.rs` — added `AnalysisStatus` and `LlmManager::analysis_status()` so backend-specific analysis messaging is emitted from the provider layer instead of hardcoded at the CLI boundary
+    - `src/main.rs` — now prints the `[ANALYZE]` banner only when the selected provider returns one, which keeps the existing Ollama wording for Ollama and suppresses it for `openai-compatible`
+    - Leveraged `crabclaw`'s provider-neutral dispatch boundary from `rust/crates/api/src/client.rs:21-90` and `rust/crates/api/src/providers/mod.rs:144-209` by moving analysis wording behind the provider layer rather than adding another `if provider == ...` branch in `main.rs`
   - Next TDD target:
-    - move provider-specific startup assumptions fully behind the provider-neutral layer so non-Ollama providers no longer emit Ollama-shaped startup logging like `[START] Starting Ollama...`
+    - move the remaining provider-shaped lifecycle wording behind the provider-neutral layer so non-Ollama providers no longer inherit generic CLI banners that should be backend-owned
 
 ---
 
@@ -189,6 +302,14 @@ PR, branch, and provider orchestration. Each section now points at the exact
 - Use it for PR base selection
 - Use it for deciding whether to auto-create a feature branch
 - Use it for the "no branch changes" diff check
+
+- Completed TDD slice: added real default-branch detection through a local bare `origin` clone
+  - `src/git/repository.rs` — added `detect_default_branch()` plus the narrow `git_stdout()`, `branch_exists()`, and `current_branch()` helpers
+  - `src/git/mod.rs` — exports `detect_default_branch`
+  - `tests/interactive_test.rs` — added `test_detect_default_branch_prefers_origin_head_from_real_remote`, which creates a real bare remote, pushes a real `main` branch, clones it, switches to a feature branch, and verifies detection still returns `main`
+  - Leveraged `crabclaw`'s current `detect_default_branch()` flow from `/home/npiesco/crabclaw/rust/crates/commands/src/lib.rs:1189-1203`
+  - Leveraged `crabclaw`'s helper shape from `/home/npiesco/crabclaw/rust/crates/commands/src/lib.rs:1246-1270`
+- Next TDD target: thread detected default branch into PR creation so `gh pr create` targets the repository base branch explicitly instead of relying on GitHub CLI defaults
 
 ---
 

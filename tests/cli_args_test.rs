@@ -21,6 +21,9 @@ fn test_default_args() {
     );
     assert!(args.template.is_none());
     assert!(args.context.is_none());
+    assert!(!args.pr);
+    assert!(!args.push);
+    assert!(!args.push_pr);
     assert!(!args.dry_run);
     assert!(!args.verbose);
     assert_eq!(args.port, 11434);
@@ -127,6 +130,24 @@ fn test_context_flag() {
 }
 
 #[test]
+fn test_pr_flag() {
+    let args = Args::try_parse_from(["git-ai-commit", "--pr"]).expect("Failed to parse args");
+    assert!(args.pr);
+}
+
+#[test]
+fn test_push_flag() {
+    let args = Args::try_parse_from(["git-ai-commit", "--push"]).expect("Failed to parse args");
+    assert!(args.push);
+}
+
+#[test]
+fn test_push_pr_flag() {
+    let args = Args::try_parse_from(["git-ai-commit", "--push-pr"]).expect("Failed to parse args");
+    assert!(args.push_pr);
+}
+
+#[test]
 fn test_debug_options() {
     // Test dry run (long form)
     let args = Args::try_parse_from(["git-ai-commit", "--dry-run"]).expect("Failed to parse args");
@@ -197,6 +218,9 @@ fn test_combined_options() {
         "custom.tpl",
         "--context",
         "ship blocker fix",
+        "--pr",
+        "--push",
+        "--push-pr",
         "--dry-run",
         "--verbose",
         "--port",
@@ -216,6 +240,9 @@ fn test_combined_options() {
     assert!(!args.no_confirm, "--confirm should set no_confirm to false");
     assert_eq!(args.template, Some(PathBuf::from("custom.tpl")));
     assert_eq!(args.context, Some("ship blocker fix".to_string()));
+    assert!(args.pr);
+    assert!(args.push);
+    assert!(args.push_pr);
     assert!(args.dry_run);
     assert!(args.verbose);
     assert_eq!(args.port, 12345);

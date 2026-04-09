@@ -41,6 +41,18 @@ pub struct ModelListing {
     pub empty_hint: Option<String>,
 }
 
+pub struct StartupStatus {
+    pub message: Option<String>,
+}
+
+pub struct ReadinessStatus {
+    pub message: Option<String>,
+}
+
+pub struct AnalysisStatus {
+    pub message: Option<String>,
+}
+
 enum Backend {
     Ollama { manager: OllamaManager, port: u16 },
     OpenAiCompatible(OpenAiCompatibleManager),
@@ -73,6 +85,36 @@ impl LlmManager {
         match &mut self.backend {
             Backend::Ollama { manager, .. } => manager.ensure_running().await,
             Backend::OpenAiCompatible(_) => Ok(()),
+        }
+    }
+
+    pub fn startup_status(&self) -> StartupStatus {
+        match &self.backend {
+            Backend::Ollama { .. } => StartupStatus {
+                message: Some("[START] Starting Ollama...".to_string()),
+            },
+            Backend::OpenAiCompatible(_) => StartupStatus { message: None },
+        }
+    }
+
+    pub fn readiness_status(&self, model_name: &str) -> ReadinessStatus {
+        match &self.backend {
+            Backend::Ollama { .. } => ReadinessStatus {
+                message: Some(format!(
+                    "[CHECK] Checking if model '{}' is available...",
+                    model_name
+                )),
+            },
+            Backend::OpenAiCompatible(_) => ReadinessStatus { message: None },
+        }
+    }
+
+    pub fn analysis_status(&self) -> AnalysisStatus {
+        match &self.backend {
+            Backend::Ollama { .. } => AnalysisStatus {
+                message: Some("[ANALYZE] Analyzing git repository...".to_string()),
+            },
+            Backend::OpenAiCompatible(_) => AnalysisStatus { message: None },
         }
     }
 
@@ -196,6 +238,9 @@ impl OpenAiCompatibleManager {
             .unwrap_or_default();
 
         if content.trim().is_empty() {
+            if self.looks_like_local_ollama() {
+                return self.generate_via_ollama_native(prompt).await;
+            }
             bail!("OpenAI-compatible provider returned an empty response");
         }
 
